@@ -1,3 +1,4 @@
+import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.DateFormat;
 import java.text.DecimalFormat;
@@ -38,7 +39,7 @@ public class ParseJSON {
         aux_HT = new HashSet<String>();
 	}
 
-	public void read(FileReader file) throws IOException {
+	public void read(FileReader file, String outputLocation) throws IOException {
         Scanner scan = new Scanner(file);
         while(scan.hasNextLine()) {
             try {
@@ -62,10 +63,12 @@ public class ParseJSON {
                     //Save the earliest tweet date and hashes
                     earliestD = earliestDTO.parse(trimmed_string);
                     created_at.addLast(earliestD);
-                    //If you don't do this, clearing aux will clear earliestHT, same object
+                    //Add individually, clearing aux later will clear earliestHT
+                    //Same object if you just use earliestHT = aux_hashtags
                     for(String p : aux_hashtags) {
                         earliestHT.add(p);
                     }
+                    //Add to list of tweets
                     earliestHTs.addLast(earliestHT);
                 } else {
                     //Check current processing tweet
@@ -173,15 +176,15 @@ public class ParseJSON {
                 e.printStackTrace();
             }
 
-            double avg_edge = truncate(averageEdges(dictionary, hashtags));
-            String string_avg_edge = String.valueOf(avg_edge);
-            writeToOutput(string_avg_edge);
+            String avg_edge = truncate(averageEdges(dictionary, hashtags));
+            writeToOutput(avg_edge, outputLocation);
         }
         scan.close();
 	}
 
 	public double averageEdges(Map<String, List<String>> nodes, Map<String, Integer> uniqueHashes) {
-        double total_edges = 0;
+        double total_edges = 0.00;
+        //Sum all the edge counts and divide by the # of nodes
         for(List<String> value : nodes.values()) {
            total_edges += value.size();
         }
@@ -199,11 +202,10 @@ public class ParseJSON {
         return false;
     }
 
-    public void writeToOutput(String text) {
+    public void writeToOutput(String text, String outputLocation) {
         try {
-            File file = new File("../tweet_output/output.txt");
+            File file = new File(outputLocation);
             if(!file.exists()) {
-
                 file.createNewFile();
             }
             FileWriter writer = new FileWriter(file, true);
@@ -215,15 +217,16 @@ public class ParseJSON {
         }
     }
 
-    public static double truncate(double value) {
-        DecimalFormat df = new DecimalFormat(".00");
+    public static String truncate(double value) {
+        DecimalFormat df = new DecimalFormat("#.00");
         df.setRoundingMode(RoundingMode.DOWN);
-        return Double.parseDouble(df.format(value));
+        return df.format(value);
     }
 
     public void removeAnyEmptyNodes(Map<String, Integer> nodeList) {
         Iterator<Map.Entry<String, Integer>> it = nodeList.entrySet().iterator();
 
+        //Go through nodeList and count if reference is 0. If so, eject node
         while(it.hasNext()) {
             Map.Entry<String, Integer> entry = it.next();
             if(entry.getValue() == 0) {
