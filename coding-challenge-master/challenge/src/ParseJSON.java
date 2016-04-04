@@ -1,4 +1,3 @@
-import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.DateFormat;
 import java.text.DecimalFormat;
@@ -12,9 +11,10 @@ import org.json.simple.parser.JSONParser;
 
 public class ParseJSON {
 	private LinkedList<Date> created_at;
-	private Set<String> hashtags;
+	private Map<String, Integer> hashtags;
     private Set<String> aux_hashtags;
 	private Map<String, List<String>> dictionary;
+    private Map<String, String> duplicateEdgesDictionary;
 	private JSONParser parser;
     private SimpleDateFormat earliestDTO;
     private Date earliestD;
@@ -26,10 +26,11 @@ public class ParseJSON {
 
 	public ParseJSON() {
 		created_at = new LinkedList<Date>();
-		hashtags = new HashSet<String>();
+		hashtags = new HashMap<String, Integer>();
         aux_hashtags = new HashSet<String>();
 		parser = new JSONParser();
 		dictionary = new HashMap<String, List<String>>();
+        duplicateEdgesDictionary = new HashMap<String, String>();
         earliestDTO = new SimpleDateFormat("E MMM dd HH:mm:ss yyyy");
         earliestD = null;
         earliestHTs = new LinkedList<Set<String>>();
@@ -61,7 +62,7 @@ public class ParseJSON {
                     //Save the earliest tweet date and hashes
                     earliestD = earliestDTO.parse(trimmed_string);
                     created_at.addLast(earliestD);
-                    //If you don't do this, clearing aux will clear earliestHT
+                    //If you don't do this, clearing aux will clear earliestHT, same object
                     for(String p : aux_hashtags) {
                         earliestHT.add(p);
                     }
@@ -71,13 +72,34 @@ public class ParseJSON {
                     DateFormat df = new SimpleDateFormat("E MMM dd HH:mm:ss yyyy");
                     Date d = df.parse(trimmed_string);
                     long diffInSeconds = (d.getTime() - earliestD.getTime())/1000;
+                    //The incoming tweet is out of order and > 60 seconds
+                    if(diffInSeconds < 0) {
+                        aux_hashtags.clear();
+                        continue;
+                    }
                     if(diffInSeconds > 60) {
+                        earliestHT = earliestHTs.removeFirst();
+
+                        //Remove necessary nodes
+                        for(String e : earliestHT) {
+                            if(dictionary.get(e).isEmpty()) {
+                                hashtags.remove(e);
+                            } else {
+                                hashtags.put(e, hashtags.get(e)-1);
+                            }
+                        }
+
+                        removeAnyEmptyNodes(hashtags);
+
                         //Remove the evicted hash edges from dictionary
-                        earliestHT = earliestHTs.getFirst();
                         for(String temp : earliestHT) {
                             for(String temp1: earliestHT) {
                                 if(temp != temp1) {
-                                    dictionary.get(temp).remove(temp1);
+                                    if(duplicateEdgesDictionary.containsKey(temp) && duplicateEdgesDictionary.containsValue(temp1)) {
+                                        duplicateEdgesDictionary.remove(temp);
+                                    } else {
+                                        dictionary.get(temp).remove(temp1);
+                                    }
                                 }
                             }
                         }
@@ -86,7 +108,6 @@ public class ParseJSON {
                         created_at.removeFirst();
                         earliestD = created_at.getFirst();
                         created_at.addLast(d);
-                        earliestHTs.removeFirst();
                         earliestHT = earliestHTs.getFirst();
                         for(String p : aux_hashtags) {
                             aux_HT.add(p);
@@ -104,7 +125,7 @@ public class ParseJSON {
                 }
 
 
-                //Check if it is in the graph
+                //Check if one of the hashes is in the graph
                 if(hashTagIsInGraph(hashtags, aux_hashtags)) {
                     for(String s : aux_hashtags) {
                         List<String> listOfTags = new ArrayList<String>();
@@ -112,17 +133,22 @@ public class ParseJSON {
                             if (s != t) {
                                 listOfTags.add(t);
                             }
-                            if(!hashtags.contains(t)) {
-                                hashtags.add(t);
-                                dictionary.put(t, new ArrayList<String>());
-                            }
+                        }
+                        if(!hashtags.containsKey(s)) {
+                            hashtags.put(s, 1);
+                            dictionary.put(s, new ArrayList<String>());
+                        } else {
+                            hashtags.put(s, hashtags.get(s)+1);
                         }
                         //Add only the hashes that are not already in the dictionary under that key
                         for(String k : listOfTags) {
                             if(!dictionary.get(s).contains(k)) {
                                 dictionary.get(s).add(k);
+                            } else {
+                                duplicateEdgesDictionary.put(s, k);
                             }
                         }
+
                     }
                 } else {
                     for (String s : aux_hashtags) {
@@ -132,7 +158,11 @@ public class ParseJSON {
                                 listOfTags.add(t);
                             }
                         }
-                        hashtags.add(s);
+                        if(hashtags.containsKey(s)) {
+                            hashtags.put(s, hashtags.get(s) + 1);
+                        } else {
+                            hashtags.put(s, 1);
+                        }
                         dictionary.put(s, listOfTags);
                     }
                 }
@@ -150,7 +180,7 @@ public class ParseJSON {
         scan.close();
 	}
 
-	public double averageEdges(Map<String, List<String>> nodes, Set<String> uniqueHashes) {
+	public double averageEdges(Map<String, List<String>> nodes, Map<String, Integer> uniqueHashes) {
         double total_edges = 0;
         for(List<String> value : nodes.values()) {
            total_edges += value.size();
@@ -158,11 +188,11 @@ public class ParseJSON {
 		return  total_edges / (double)uniqueHashes.size();
 	}
 
-    public boolean hashTagIsInGraph(Set<String> a, Set<String> b) {
+    public boolean hashTagIsInGraph(Map<String, Integer> a, Set<String> b) {
         //Iterate through b
         for(String temp : b) {
             //If hashtags has an item in the graph already
-            if(a.contains(temp)) {
+            if(a.containsKey(temp)) {
                 return true;
             }
         }
@@ -189,5 +219,16 @@ public class ParseJSON {
         DecimalFormat df = new DecimalFormat(".00");
         df.setRoundingMode(RoundingMode.DOWN);
         return Double.parseDouble(df.format(value));
+    }
+
+    public void removeAnyEmptyNodes(Map<String, Integer> nodeList) {
+        Iterator<Map.Entry<String, Integer>> it = nodeList.entrySet().iterator();
+
+        while(it.hasNext()) {
+            Map.Entry<String, Integer> entry = it.next();
+            if(entry.getValue() == 0) {
+                it.remove();
+            }
+        }
     }
 }
