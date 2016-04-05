@@ -200,6 +200,9 @@ public class ParseJSON {
 
 	public double averageEdges(Map<String, List<String>> nodes, Map<String, Integer> uniqueHashes) {
         double total_edges = 0.00;
+        if((double)uniqueHashes.size() == 0) {
+            return 0.00;
+        }
         //Sum all the edge counts and divide by the # of nodes
         for(List<String> value : nodes.values()) {
            total_edges += value.size();
@@ -234,7 +237,7 @@ public class ParseJSON {
     }
 
     public static String truncate(double value) {
-        DecimalFormat df = new DecimalFormat("#.00");
+        DecimalFormat df = new DecimalFormat("0.00");
         df.setRoundingMode(RoundingMode.DOWN);
         return df.format(value);
     }
