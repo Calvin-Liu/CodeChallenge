@@ -11,17 +11,18 @@ import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 
 public class ParseJSON {
-	private LinkedList<Date> created_at;
-	private Map<String, Integer> hashtags;
-    private Set<String> aux_hashtags;
-	private Map<String, List<String>> dictionary;
-    private Map<String, String> duplicateEdgesDictionary;
+	private LinkedList<Date> created_at; //queue like for created_at tweets
+	private Map<String, Integer> hashtags; //counts how many times node appears to know whether to remove or not from graph
+    private Set<String> aux_hashtags; //the current tweet's hashtag being processed
+	private Map<String, List<String>> dictionary; //a dictionary of the edges per node
+    private Map<String, LinkedList<String>> duplicateEdgesDictionary; //a dictionary that keeps track if there are duplicate edges we should know about
 	private JSONParser parser;
     private SimpleDateFormat earliestDTO;
-    private Date earliestD;
-    private LinkedList<Set<String>> earliestHTs;
-    private Set<String> earliestHT;
+    private Date earliestD; //The earliest created_at date
+    private LinkedList<Set<String>> earliestHTs; //queue like for hashtags tweets
+    private Set<String> earliestHT; //The earliest hashtag
     private Set<String> aux_HT;
+    private String avg_edge;
 
 	@SuppressWarnings("unchecked")
 
@@ -31,12 +32,13 @@ public class ParseJSON {
         aux_hashtags = new HashSet<String>();
 		parser = new JSONParser();
 		dictionary = new HashMap<String, List<String>>();
-        duplicateEdgesDictionary = new HashMap<String, String>();
+        duplicateEdgesDictionary = new HashMap<String, LinkedList<String>>();
         earliestDTO = new SimpleDateFormat("E MMM dd HH:mm:ss yyyy");
         earliestD = null;
         earliestHTs = new LinkedList<Set<String>>();
         earliestHT = new HashSet<String>();
         aux_HT = new HashSet<String>();
+        avg_edge = "0.00";
 	}
 
 	public void read(FileReader file, String outputLocation) throws IOException {
@@ -47,6 +49,9 @@ public class ParseJSON {
 
                 JSONObject jsonObject = (JSONObject) obj;
 
+                if(jsonObject.get("limit") != null) {
+                   continue;
+                }
                 String single_created_at = (String) jsonObject.get("created_at");
                 String trimmed_string = single_created_at.substring(0,19) + single_created_at.substring(25,30);
 
@@ -63,10 +68,12 @@ public class ParseJSON {
                     //Save the earliest tweet date and hashes
                     earliestD = earliestDTO.parse(trimmed_string);
                     created_at.addLast(earliestD);
-                    //If you don't do this, clearing aux will clear earliestHT, same object
+                    //Add individually, clearing aux later will clear earliestHT
+                    //Same object if you just use earliestHT = aux_hashtags
                     for(String p : aux_hashtags) {
                         earliestHT.add(p);
                     }
+                    //Add to list of tweets
                     earliestHTs.addLast(earliestHT);
                 } else {
                     //Check current processing tweet
@@ -76,12 +83,13 @@ public class ParseJSON {
                     //The incoming tweet is out of order and > 60 seconds
                     if(diffInSeconds < 0) {
                         aux_hashtags.clear();
+                        writeToOutput(avg_edge, outputLocation);
                         continue;
                     }
                     if(diffInSeconds > 60) {
                         earliestHT = earliestHTs.removeFirst();
 
-                        //Remove necessary nodes
+                        //Remove necessary nodes or decrement the hashtag count to know when to remove node
                         for(String e : earliestHT) {
                             if(dictionary.get(e).isEmpty()) {
                                 hashtags.remove(e);
@@ -92,12 +100,13 @@ public class ParseJSON {
 
                         removeAnyEmptyNodes(hashtags);
 
-                        //Remove the evicted hash edges from dictionary
+                        //Remove the evicted hash edges from dictionary. Check if there is an earlier
+                        //tweet with the same edge in the duplicate dictionary
                         for(String temp : earliestHT) {
                             for(String temp1: earliestHT) {
                                 if(temp != temp1) {
-                                    if(duplicateEdgesDictionary.containsKey(temp) && duplicateEdgesDictionary.containsValue(temp1)) {
-                                        duplicateEdgesDictionary.remove(temp);
+                                    if(duplicateEdgesDictionary.containsKey(temp) && duplicateEdgesDictionary.get(temp).contains(temp1)) {
+                                        duplicateEdgesDictionary.get(temp).remove(temp1);
                                     } else {
                                         dictionary.get(temp).remove(temp1);
                                     }
@@ -116,6 +125,7 @@ public class ParseJSON {
                         earliestHTs.addLast(aux_HT);
                         aux_HT = new HashSet<String>();
                     } else {
+                        //Just add the info for the incoming tweet
                         created_at.addLast(d);
                         for(String p : aux_hashtags) {
                             aux_HT.add(p);
@@ -135,6 +145,7 @@ public class ParseJSON {
                                 listOfTags.add(t);
                             }
                         }
+                        //If hashtags/dictionary doesnt contain the hashtag, add it with an empty adjacency list
                         if(!hashtags.containsKey(s)) {
                             hashtags.put(s, 1);
                             dictionary.put(s, new ArrayList<String>());
@@ -146,7 +157,13 @@ public class ParseJSON {
                             if(!dictionary.get(s).contains(k)) {
                                 dictionary.get(s).add(k);
                             } else {
-                                duplicateEdgesDictionary.put(s, k);
+                                //We have seen this same edge before, put in duplicate dictionary
+                                //If latest tweet is being ejected, we will eject from duplicate and not the actual
+                                //Until all references of those edges are gone
+                                if(duplicateEdgesDictionary.get(s) == null) {
+                                    duplicateEdgesDictionary.put(s, new LinkedList<String>());
+                                }
+                                duplicateEdgesDictionary.get(s).add(k);
                             }
                         }
 
@@ -174,14 +191,16 @@ public class ParseJSON {
                 e.printStackTrace();
             }
 
-            String avg_edge = truncate(averageEdges(dictionary, hashtags));
+            avg_edge = truncate(averageEdges(dictionary, hashtags));
             writeToOutput(avg_edge, outputLocation);
         }
+        //Stop reading the tweets in the text file
         scan.close();
 	}
 
 	public double averageEdges(Map<String, List<String>> nodes, Map<String, Integer> uniqueHashes) {
         double total_edges = 0.00;
+        //Sum all the edge counts and divide by the # of nodes
         for(List<String> value : nodes.values()) {
            total_edges += value.size();
         }
@@ -203,7 +222,6 @@ public class ParseJSON {
         try {
             File file = new File(outputLocation);
             if(!file.exists()) {
-
                 file.createNewFile();
             }
             FileWriter writer = new FileWriter(file, true);
@@ -224,6 +242,7 @@ public class ParseJSON {
     public void removeAnyEmptyNodes(Map<String, Integer> nodeList) {
         Iterator<Map.Entry<String, Integer>> it = nodeList.entrySet().iterator();
 
+        //Go through nodeList and count if reference is 0. If so, eject node
         while(it.hasNext()) {
             Map.Entry<String, Integer> entry = it.next();
             if(entry.getValue() == 0) {
